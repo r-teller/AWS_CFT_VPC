@@ -1,5 +1,5 @@
 {
-	"Description": "This template deploys a simple VPC for blue cluster egress testing",
+	"Description": "This template deploys a simple VPC for egress testing",
     "Metadata": {
         "AWS::CloudFormation::Interface" : {
             "ParameterGroups" : [
