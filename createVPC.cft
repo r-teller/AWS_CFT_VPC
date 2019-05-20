@@ -1,0 +1,631 @@
+{
+	"Description": "This template deploys a simple VPC for blue cluster egress testing",
+    "Metadata": {
+        "AWS::CloudFormation::Interface" : {
+            "ParameterGroups" : [
+                {
+                "Parameters" : [ "EnvironmentName", "VpcCIDR","DeploymentModel","PublicSubnetCIDR", "PrivateSubnetCIDR","IsolatedSubnetCIDR" ]
+                }
+            ]
+        }
+    },
+	"Parameters": {
+		"EnvironmentName": {
+			"Description": "An environment name that will be prefixed to resource names",
+			"Type": "String"
+		},
+		"VpcCIDR": {
+			"Description": "Please enter the IP range (CIDR notation) for your testing VPC",
+			"Type": "String",
+			"Default": "10.0.0.0/16"
+		},
+		"DeploymentModel": {
+			"Type": "String",
+			"Default": "Public",
+	        "AllowedValues": [
+	          "Public",
+	          "Public-Private",
+	          "Public-Isolated",
+	          "Public-Private-Isolated"
+	        ]
+		},
+		"PublicSubnetCIDR": {
+			"Description": "Please enter the IP range (CIDR notation)",
+			"Type": "String",
+			"Default": "10.0.0.0/24"
+		},
+		"PrivateSubnetCIDR": {
+			"Description": "Please enter the IP range (CIDR notation)",
+			"Type": "String",
+			"Default": "10.0.1.0/24"
+		},
+		"IsolatedSubnetCIDR": {
+			"Description": "Please enter the IP range (CIDR notation)",
+			"Type": "String",
+			"Default": "10.0.2.0/24"
+		},
+        "ExistingKeyPairName": {
+          "Description": "Select an existing EC2 key pair to enable SSH access to the instance.",
+          "Type": "AWS::EC2::KeyPair::KeyName",
+          "AllowedPattern": "[a-zA-Z0-9-_~!@#$%^&*()\\+]+$",
+          "ConstraintDescription": "You must select an existing EC2 key pair."
+        }
+	},
+	"Conditions": {
+		"False": {"Fn::Equals": [{"Ref": "DeploymentModel"}, "prod"]},
+		"IsPrivate": {
+			"Fn::Or": [
+				{"Fn::Equals": [{"Ref": "DeploymentModel"}, "Public-Private"]},
+				{"Fn::Equals": [{"Ref": "DeploymentModel"}, "Public-Private-Isolated"]}
+			]
+		},
+		"IsIsolated": {
+			"Fn::Or": [
+				{"Fn::Equals": [{"Ref": "DeploymentModel"}, "Public-Isolated"]},
+				{"Fn::Equals": [{"Ref": "DeploymentModel"}, "Public-Private-Isolated"]}
+			]
+		}
+	},
+	"Resources": {
+		"VPC": {
+			"Type": "AWS::EC2::VPC",
+			"Properties": {
+				"CidrBlock": {
+					"Ref": "VpcCIDR"
+				},
+				"EnableDnsSupport": true,
+				"EnableDnsHostnames": true,
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": {
+							"Ref": "EnvironmentName"
+						}
+					}
+				]
+			}
+		},
+		"InternetGateway": {
+			"Type": "AWS::EC2::InternetGateway",
+			"Properties": {
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "IGW"
+                                ]
+                            ]
+						}
+					}
+				]
+			}
+		},
+		"ElasticIP": {
+			"Type" : "AWS::EC2::EIP",
+			"Properties" : {
+				"Domain" : "vpc"
+			}
+		},
+		"NatGateway": {
+			"Condition": "IsPrivate",
+			"Type": "AWS::EC2::NatGateway",
+			"Properties": {
+				"AllocationId" : { "Fn::GetAtt" : ["ElasticIP", "AllocationId"]},
+				"SubnetId" : { "Ref" : "PublicSubnetAzA"},
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "NGW"
+                                ]
+                            ]
+						}
+					}
+				]
+			}
+		},
+		"InternetGatewayAttachment": {
+			"Type": "AWS::EC2::VPCGatewayAttachment",
+			"Properties": {
+				"InternetGatewayId": {
+					"Ref": "InternetGateway"
+				},
+				"VpcId": {
+					"Ref": "VPC"
+				}
+			}
+		},
+		"PublicRouteTable": {
+			"Type": "AWS::EC2::RouteTable",
+			"Properties": {
+				"VpcId": {
+					"Ref": "VPC"
+				},
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": {
+							"Fn::Join": [
+								"-",
+								[
+									{
+										"Ref": "EnvironmentName"
+									},
+									"PublicRouteTable"
+								]
+							]
+						}
+					}
+				]
+			}
+		},
+		"PublicRouteDefault": {
+			"Type": "AWS::EC2::Route",
+			"DependsOn": "InternetGatewayAttachment",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "PublicRouteTable"
+				},
+				"DestinationCidrBlock": "0.0.0.0/0",
+				"GatewayId": {
+					"Ref": "InternetGateway"
+				}
+			}
+		},
+		"PublicSubnetAzA": {
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {
+					"Ref": "VPC"
+				},
+				"AvailabilityZone": {
+					"Fn::Select": [
+						0,
+						{
+							"Fn::GetAZs": ""
+						}
+					]
+				},
+				"CidrBlock": {
+					"Ref": "PublicSubnetCIDR"
+				},
+				"MapPublicIpOnLaunch": true,
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": {
+							"Fn::Join": [
+								"-",
+								[
+									{
+										"Ref": "EnvironmentName"
+									},
+									"PublicSubnet-AZ-A"
+								]
+							]
+						}
+					}
+				]
+			}
+		},
+		"PublicSubnetRouteTableAssociation": {
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "PublicRouteTable"
+				},
+				"SubnetId": {
+					"Ref": "PublicSubnetAzA"
+				}
+			}
+		},
+		"PrivateRouteTable": {
+			"Condition": "IsPrivate",
+			"Type": "AWS::EC2::RouteTable",
+			"Properties": {
+				"VpcId": {
+					"Ref": "VPC"
+				},
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "PrivateRouteTable"
+                                ]
+                            ]
+						}
+					}
+				]
+			}
+		},
+		"PrivateRouteDefault": {
+			"Condition": "IsPrivate",
+			"Type": "AWS::EC2::Route",
+            "DependsOn" : "NatGateway",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "PrivateRouteTable"
+				},
+				"DestinationCidrBlock": "0.0.0.0/0",
+				"NatGatewayId": {
+					"Ref": "NatGateway"
+				}
+			}
+		},
+		"PrivateSubnetAzA": {
+			"Condition": "IsPrivate",
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {
+					"Ref": "VPC"
+				},
+				"AvailabilityZone": {
+					"Fn::Select": [
+						0,
+						{
+							"Fn::GetAZs": ""
+						}
+					]
+				},
+				"CidrBlock": {
+					"Ref": "PrivateSubnetCIDR"
+				},
+				"MapPublicIpOnLaunch": false,
+				"Tags": [
+                    {
+						"Key": "Name",
+						"Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "PrivateSubnet-AZ-A"
+                                ]
+                            ]
+						}
+					}
+				]
+			}
+		},
+		"PrivateSubnetRouteTableAssociation": {
+			"Condition": "IsPrivate",
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "PrivateRouteTable"
+				},
+				"SubnetId": {
+					"Ref": "PrivateSubnetAzA"
+				}
+			}
+		},
+		"IsolatedRouteTable": {
+			"Condition": "IsIsolated",
+			"Type": "AWS::EC2::RouteTable",
+			"Properties": {
+				"VpcId": {
+					"Ref": "VPC"
+				},
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "IsolatedRouteTable"
+                                ]
+                            ]
+						}
+					}
+				]
+			}
+		},
+		"IsolatedRouteDefault": {
+			"Condition": "IsIsolated",
+			"Type": "AWS::EC2::Route",
+            "DependsOn" : "Ec2LinuxRouter",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "IsolatedRouteTable"
+				},
+				"DestinationCidrBlock": "0.0.0.0/0",
+				"NetworkInterfaceId": {
+					"Ref": "ENAIsolatedLinuxRouter"
+				}
+			}
+		},
+		"IsolatedSubnetAzA": {
+			"Condition": "IsIsolated",
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {
+					"Ref": "VPC"
+				},
+				"AvailabilityZone": {
+					"Fn::Select": [
+						0,
+						{
+							"Fn::GetAZs": ""
+						}
+					]
+				},
+				"CidrBlock": {
+					"Ref": "IsolatedSubnetCIDR"
+				},
+				"MapPublicIpOnLaunch": false,
+				"Tags": [
+                    {
+						"Key": "Name",
+						"Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "IsolatedSubnet-AZ-A"
+                                ]
+                            ]
+						}
+					}
+				]
+			}
+		},
+		"IsolatedSubnetRouteTableAssociation": {
+			"Condition": "IsIsolated",
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "IsolatedRouteTable"
+				},
+				"SubnetId": {
+					"Ref": "IsolatedSubnetAzA"
+				}
+			}
+		},
+        "LinuxRouterSecurityGroup": {
+			"Condition": "IsIsolated",
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "SecurityGroupIngress": [
+                {
+                    "IpProtocol": "-1",
+                    "CidrIp": "0.0.0.0/0",
+                    "Description": "Beta customer defined Source location to perform SSH"
+                }],
+                "GroupDescription": "Security group for control nodes.",
+                "VpcId": {
+                  "Ref": "VPC"
+                }
+            }
+        },
+        "ENAPublicLinuxRouter":{
+			"Condition": "IsIsolated",
+            "Type": "AWS::EC2::NetworkInterface",
+            "Properties": {
+                "SourceDestCheck": false,
+                "Description": "Public Interface for Linux Router",
+                "GroupSet": [
+                    {
+                        "Ref": "LinuxRouterSecurityGroup"
+                    }
+                ],
+                "SubnetId": {
+                    "Ref": "PublicSubnetAzA"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "PublicENA"
+                                ]
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "ENAIsolatedLinuxRouter":{
+			"Condition": "IsIsolated",
+            "Type": "AWS::EC2::NetworkInterface",
+            "Properties": {
+                "SourceDestCheck": false,
+                "Description": "Private Interface for Linux Router",
+                "GroupSet": [
+                    {
+                        "Ref": "LinuxRouterSecurityGroup"
+                    }
+                ],
+                "SubnetId": {
+                    "Ref": "IsolatedSubnetAzA"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "PrivateENA"
+                                ]
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "Ec2LinuxRouter": {
+			"Condition": "IsIsolated",
+            "Type" : "AWS::EC2::Instance",
+            "Properties": {
+                "KeyName": {
+                  "Ref": "ExistingKeyPairName"
+                },
+                "NetworkInterfaces": [
+                     {
+                        "Description": "Public Interface",
+                        "DeviceIndex": "0",
+                        "NetworkInterfaceId":
+                        {
+                            "Ref": "ENAPublicLinuxRouter"
+                        }
+                    }
+                ],
+                "InstanceType": "m5.large",
+                "ImageId": {
+                  "Fn::FindInMap": [
+                    "AWSRegion2AMI",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    "AMI"
+                  ]
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "EnvironmentName"
+                                    },
+                                    "LinuxRouter"
+                                ]
+                            ]
+                        }
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash\n",
+                                "int01=`ip a | grep ^[[:digit:]] | sed -sn 2p | awk '{ print $2 }' | tr -d ':'`\n",
+                                "int02=`ip a | grep ^[[:digit:]] | sed -sn 3p | awk '{ print $2 }' | tr -d ':'`\n",
+                                "echo -e \"GATEWAYDEV=$int01\" | sudo tee -a /etc/sysconfig/network\n",
+                                "\n## Check if int01 exists\n",
+                                "if [ ! -f /etc/sysconfig/network-scripts/ifcfg-$int01 ]; then\n",
+                                    "\n## Since int01 does not exist add it\n",
+                                    "echo -e '## Created from userdata\\n' | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int01\n",
+                                    "echo -e \"BOOTPROTO=dhcp\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int01\n",
+                                    "echo -e \"DEVICE=$int01\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int01\n",
+                                    "echo -e \"ONBOOT=yes\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int01\n",
+                                    "echo -e \"TYPE=Ethernet\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int01\n",
+                                    "echo -e \"USERCTL=no\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int01\n",
+                                    "\n## Restarting networking service\n",
+                                    "sudo systemctl restart network\n",
+                                "fi\n",
+                                "\n## Check if int02 exists\n",
+                                "if [ ! -f /etc/sysconfig/network-scripts/ifcfg-$int02 ]; then\n",
+                                    "\n## Since int02 does not exist add it\n",
+                                    "echo -e '## Created from userdata\\n' | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int02\n",
+                                    "echo -e \"BOOTPROTO=dhcp\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int02\n",
+                                    "echo -e \"DEVICE=$int02\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int02\n",
+                                    "echo -e \"ONBOOT=yes\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int02\n",
+                                    "echo -e \"TYPE=Ethernet\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int02\n",
+                                    "echo -e \"USERCTL=no\" | sudo tee -a  /etc/sysconfig/network-scripts/ifcfg-$int02\n",
+                                    "\n## Restarting networking service\n",
+                                    "sudo systemctl restart network\n",
+                                "fi\n",
+                                "\n## Install the required applications and services\n",
+                                "sudo yum -y install tcpdump  iptables-services\n",
+                                "\n## Enable IP_Forwarding\n",
+                                "echo -e 'net.ipv4.ip_forward = 1' | sudo tee -a  /etc/sysctl.d/90-override.conf\n",
+                                "\n## Update routing to prefer the primary interface\n",
+                                "\n## Update IP Tables to masquerade traffic leaving\n",
+                                "sudo systemctl enable iptables\n",
+                                "sudo iptables -t nat -A POSTROUTING -o $int01 -j MASQUERADE\n",
+                                "sudo service iptables save\n",
+                                "sudo reboot\n"
+                            ]
+                        ]
+                    }
+                }
+            }
+        },
+        "AttachPrivateENA": {
+			"Condition": "IsIsolated",
+            "Type" : "AWS::EC2::NetworkInterfaceAttachment",
+                "Properties" : {
+                    "InstanceId" : {"Ref" : "Ec2LinuxRouter"},
+                    "NetworkInterfaceId" : {"Ref" : "ENAIsolatedLinuxRouter"},
+                    "DeviceIndex" : "1"
+                }
+        }
+	},
+    "Mappings": {
+        "AWSRegion2AMI": {
+            "eu-north-1": { "AMI": "ami-5ee66f20" },
+            "ap-south-1": { "AMI": "ami-02e60be79e78fef21" },
+            "eu-west-3": { "AMI": "ami-0e1ab783dc9489f34" },
+            "eu-west-2": { "AMI": "ami-0eab3a90fc693af19" },
+            "eu-west-1": { "AMI": "ami-0ff760d16d9497662" },
+            "ap-northeast-2": { "AMI": "ami-06cf2a72dadf92410" },
+            "ap-northeast-1": { "AMI": "ami-045f38c93733dd48d" },
+            "sa-east-1": { "AMI": "ami-0b8d86d4bf91850af" },
+            "ca-central-1": { "AMI": "ami-033e6106180a626d0" },
+            "ap-southeast-1": { "AMI": "ami-0b4dd9d65556cac22" },
+            "ap-southeast-2": { "AMI": "ami-08bd00d7713a39e7d" },
+            "eu-central-1": { "AMI": "ami-04cf43aca3e6f3de3" },
+            "us-east-1": { "AMI": "ami-02eac2c0129f6376b" },
+            "us-east-2": { "AMI": "ami-0f2b4fc905b0bd1f1" },
+            "us-west-1": { "AMI": "ami-074e2d6769f445be5" },
+            "us-west-2": { "AMI": "ami-01ed306a12b7d1c96" }
+        }
+    },
+	"Outputs": {
+		"VPC": {
+			"Description": "A reference to the created VPC",
+			"Value": {
+				"Ref": "VPC"
+			}
+		},
+		"PublicSubnets": {
+			"Description": "A list of the public subnets",
+			"Value": {
+				"Fn::Join": [
+					",",
+					[
+						"Ref: PublicSubnet"
+					]
+				]
+			}
+		}
+	}
+}
